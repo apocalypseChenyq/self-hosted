@@ -1,8 +1,14 @@
-# Sentry自托管升级指南：从23.4.0到25.6.1
+# Sentry自托管升级指南：从23.4.0到25.6.2（CentOS版本）
 
 ## 概述
 
-本指南将帮助您将Sentry自托管版本从23.4.0升级到25.6.1。由于版本跨度较大，需要通过多个Hard Stop版本进行逐步升级。
+本指南将帮助您将Sentry自托管版本从23.4.0升级到25.6.2。由于版本跨度较大，需要通过多个Hard Stop版本进行逐步升级。
+
+### 系统适配说明
+
+本指南专门针对CentOS系统进行了优化，主要变更：
+- 备份和恢复命令使用CentOS Docker镜像
+- 其他命令保持通用性，适用于大部分Linux发行版
 
 ## ⚠️ 重要提醒
 
@@ -10,24 +16,38 @@
 2. **停机时间**：升级过程中服务将不可用
 3. **Hard Stop**：必须按照指定的Hard Stop版本逐步升级
 4. **测试环境**：建议先在测试环境进行升级验证
+5. **内存要求**：确保系统有足够的16GB RAM
+6. **版本验证**：升级前请确认目标版本已正式发布
+
+## 🔥 生产环境注意事项
+
+- **内存不足风险**：如果RAM少于16GB，升级可能失败或导致服务不稳定
+- **数据丢失风险**：跨版本升级时数据库迁移可能失败，务必做好备份
+- **回滚准备**：每个Hard Stop版本都应该能够独立回滚
+- **监控准备**：升级过程中建议有专人监控系统资源使用情况
 
 ## 升级路径
 
-根据官方文档，从23.4.0到25.6.1需要经过以下Hard Stop版本：
+根据官方文档，从23.4.0到25.6.2需要经过以下Hard Stop版本：
 
 ```
-23.4.0 → 23.6.2 → 23.11.0 → 24.8.0 → 25.5.1 → 25.6.1
+23.4.0 → 23.6.2 → 23.11.0 → 24.8.0 → 25.5.1 → 25.6.2
 ```
+
+⚠️ **注意**: 截至文档更新时间，25.6.2版本尚未发布，当前最新稳定版本为25.6.2。
 
 ## 预备工作
 
 ### 1. 系统要求检查
 
 确保系统满足最新版本要求：
-- **内存**：至少4GB（推荐8GB+）
+- **CPU**：至少4核
+- **内存**：至少16GB RAM（这是硬性要求）
 - **磁盘空间**：至少20GB可用空间
-- **Docker**：版本20.10.0+
-- **Docker Compose**：版本2.23.2+
+- **Docker**：版本19.03.6+
+- **Docker Compose**：版本2.32.2+
+
+⚠️ **重要提醒**: 从25.x版本开始，内存要求已从4GB提升到16GB，这是运行稳定的最低要求。
 
 ### 2. 数据备份（必须）
 
@@ -37,9 +57,9 @@
 docker-compose down
 
 # 备份所有数据卷
-docker run --rm -v $(pwd):/backup -v sentry-postgres:/data ubuntu tar czf /backup/postgres-backup-$(date +%Y%m%d).tar.gz -C /data .
-docker run --rm -v $(pwd):/backup -v sentry-clickhouse:/data ubuntu tar czf /backup/clickhouse-backup-$(date +%Y%m%d).tar.gz -C /data .
-docker run --rm -v $(pwd):/backup -v sentry-redis:/data ubuntu tar czf /backup/redis-backup-$(date +%Y%m%d).tar.gz -C /data .
+docker run --rm -v $(pwd):/backup -v sentry-postgres:/data centos tar czf /backup/postgres-backup-$(date +%Y%m%d).tar.gz -C /data .
+docker run --rm -v $(pwd):/backup -v sentry-clickhouse:/data centos tar czf /backup/clickhouse-backup-$(date +%Y%m%d).tar.gz -C /data .
+docker run --rm -v $(pwd):/backup -v sentry-redis:/data centos tar czf /backup/redis-backup-$(date +%Y%m%d).tar.gz -C /data .
 
 # 备份配置文件
 cp -r sentry/ sentry-backup-$(date +%Y%m%d)/
@@ -182,16 +202,16 @@ git checkout 25.5.1
 docker-compose up --wait
 ```
 
-### 第五步：升级到25.6.1（最终版本）
+### 第五步：升级到25.6.2（最终版本）
 
 #### 1. 切换版本
 ```bash
-git checkout 25.6.1
+git checkout 25.6.2
 ```
 
 #### 2. 新特性配置
 
-25.6.1版本包含的新特性：
+25.6.2版本包含的新特性：
 - ARM64支持改进
 - SMTP容器更新
 - Taskbroker服务（预览）
@@ -269,7 +289,7 @@ docker system df
 - **数据库迁移压缩**：重要的数据库schema变更
 - **配置清理**：移除过时的功能标志
 
-### 25.5.1 → 25.6.1
+### 25.5.1 → 25.6.2
 - **ARM64支持**：Linux ARM64完全支持
 - **SMTP容器更新**：更强大的SMTP服务
 - **Taskbroker引入**：新的任务处理服务（预览）
@@ -316,6 +336,33 @@ docker-compose down
 docker-compose up --build
 ```
 
+#### 5. CentOS特有问题
+```bash
+# SELinux问题（CentOS常见）
+sudo setsebool -P httpd_can_network_connect 1
+sudo setsebool -P httpd_can_network_relay 1
+
+# 防火墙问题
+sudo firewall-cmd --permanent --add-port=9000/tcp
+sudo firewall-cmd --reload
+
+# 检查CentOS版本兼容性
+cat /etc/redhat-release
+```
+
+#### 6. 内存不足问题
+```bash
+# 检查内存使用情况
+free -h
+docker stats --no-stream
+
+# 如果内存不足，考虑增加swap
+sudo dd if=/dev/zero of=/swapfile bs=1M count=4096
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+```
+
 ## 回滚方案
 
 如果升级失败，可以通过以下方式回滚：
@@ -329,9 +376,9 @@ docker-compose down
 docker volume rm sentry-postgres sentry-clickhouse sentry-redis
 
 # 恢复备份
-docker run --rm -v $(pwd):/backup -v sentry-postgres:/data ubuntu tar xzf /backup/postgres-backup-YYYYMMDD.tar.gz -C /data
-docker run --rm -v $(pwd):/backup -v sentry-clickhouse:/data ubuntu tar xzf /backup/clickhouse-backup-YYYYMMDD.tar.gz -C /data
-docker run --rm -v $(pwd):/backup -v sentry-redis:/data ubuntu tar xzf /backup/redis-backup-YYYYMMDD.tar.gz -C /data
+docker run --rm -v $(pwd):/backup -v sentry-postgres:/data centos tar xzf /backup/postgres-backup-YYYYMMDD.tar.gz -C /data
+docker run --rm -v $(pwd):/backup -v sentry-clickhouse:/data centos tar xzf /backup/clickhouse-backup-YYYYMMDD.tar.gz -C /data
+docker run --rm -v $(pwd):/backup -v sentry-redis:/data centos tar xzf /backup/redis-backup-YYYYMMDD.tar.gz -C /data
 
 # 切换到原版本
 git checkout 23.4.0
@@ -370,14 +417,24 @@ docker stats --format "table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}"
 - 配置错误率阈值告警
 
 ### 3. 新功能启用
-根据需要启用25.6.1的新功能：
+根据需要启用25.6.2的新功能：
 - 连续性能分析
 - Session Replay Canvas
 - Trace View
 
+### 4. 使用新的备份方法
+25.x版本提供了更好的备份/恢复工具：
+```bash
+# 使用新的sentry-admin工具进行备份
+./sentry-admin.sh export global /path/to/backup.json
+
+# 支持加密备份
+./sentry-admin.sh export global /path/to/backup.tar --encrypt-with /path/to/public/key.pub
+```
+
 ## 总结
 
-升级从23.4.0到25.6.1是一个重要的版本升级，包含了许多架构改进和新功能。务必：
+升级从23.4.0到25.6.2是一个重要的版本升级，包含了许多架构改进和新功能。务必：
 
 1. **严格按照Hard Stop路径升级**
 2. **在每个步骤前备份数据**
@@ -393,7 +450,8 @@ docker stats --format "table {{.Container}}\t{{.CPUPerc}}\t{{.MemUsage}}"
 
 ---
 
-**创建时间**: 2025-01-21
-**适用版本**: Sentry Self-Hosted 23.4.0 → 25.6.1
-**文档版本**: 1.0
+**创建时间**: 2025-07-03
+**适用版本**: Sentry Self-Hosted 23.4.0 → 25.6.2
+**适用系统**: CentOS Linux
+**文档版本**: 1.2 (CentOS适配版 - 已修正版本信息)
 **预计升级时间**: 2-4小时（取决于数据量）
